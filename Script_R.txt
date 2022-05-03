@@ -1,0 +1,193 @@
+library(ggcorrplot) #to have a graphical visualization of the correlation matrix 
+library(fastDummies)#to transform categorical variables into dummy ones
+library(readr) # to read the csv file containing the data
+library(tidyverse) 
+library(datarium)
+library(ggplot2) # to make some plots
+library(rsm)
+library(MASS)
+library(olsrr) 
+library(car)
+library(ISLR)
+library(corrplot)
+library(caret) # to perform train-test split
+library(readr)
+
+# Load sales.csv dataset
+Sales <- read_csv("Sales.csv")
+
+#Transformations carried out in order to work on the model 
+#Missing Values
+length(which(Sales$Item_Visibility == 0)) #526 data points have visibility equal to zero. 
+sum(is.na(Sales$Item_Weight)) # the Item_weight variable has 1463 missing values 
+sum(is.na(Sales$Outlet_Size)) #the Outlet_size variable has 2410 missing values.
+sum(is.na(Sales)) #there are in total 3873 missing values
+
+# Data Cleaning
+#For the categorical variable, Outlet Size, the missing values have been substituted with the label 'Missing' 
+table(Sales$Outlet_Size)
+Sales$Outlet_Size[is.na(Sales$Outlet_Size)] <- "Small"
+
+#For the numerical variable, Item Weight, the missing values have been substituted with their mean. 
+Sales$Item_Weight[is.na(Sales$Item_Weight)] <- mean(Sales$Item_Weight, na.rm = TRUE)
+sum(is.na(Sales$Item_Weight)) 
+sum(is.na(Sales)) 
+
+#Remove the product ID and Outlet Establishment year variables since they have no role in our regression analysis
+Sales <- Sales[,-1] 
+Sales <- Sales[,-7] 
+View(Sales)
+summary(Sales)
+
+#Graph
+ggplot(Sales, aes(Sales$Outlet_Identifier, fill = Sales$Outlet_Location_Type, colour = Sales$Outlet_Type))+
+  geom_bar()
+
+ggplot(Sales, aes(Sales$Outlet_Location_Type, y = Sales$Outlet_Identifier, fill = Sales$Outlet_Type))+
+  geom_bar(position = position_dodge2(preserve = "single"),stat = "identity")
+
+ggplot(Sales,aes(Sales$Outlet_Location_Type, fill = Sales$Outlet_Identifier))+
+  geom_bar()+
+  facet_wrap(~Sales$Outlet_Type, scales = "free_y")+
+  labs(title="Outlet Identifier Analysis", x="Outlet Location Type", fill = "Outlet Identifier")
+
+# Associations 
+#A matrix representing the association of the quantitative variables
+Y = Sales[,c(1,3,5,10)]
+cor <- as.matrix(round(cor(Y, method = "spearman")),3)
+ggcorrplot(cor, type = "lower", insig = "blank")
+
+# Create Dummy Variables 
+new_data <- fastDummies::dummy_cols(Sales, remove_selected_columns = TRUE) #fastdummies ti estrae dalla libreria dummy_cols, dummy_cols ci va tutto il daset quindi Sales, prende le categoriche e te le toglie
+View(new_data)
+
+#Remove one of each new category that has been created for the categorical variables and save
+#the results in a new dataset
+z <- c(-8,-24, -34, -37, -41, -45)
+z
+new_data1 <- new_data[,z]
+View(new_data1)
+
+# Analysis of correlation between the predictors
+cor <- as.matrix(round(cor(new_data1[,-4], method = "spearman"),3))
+cor
+ggcorrplot(cor, type = "lower", insig = "blank")
+head(new_data1)
+
+#We remove ALL THE variables that are perfectly correlated to prevent collinearity. 
+n<- c(-39,-38,-37,-36,-35,-34,-33)
+new_data1 <- new_data1[,n]
+View(new_data1)
+
+#Plot the new correlation matrix
+cor <- as.matrix(round(cor(new_data1[,-4], method = "spearman"),3))
+ggcorrplot(cor, type = "lower", insig = "blank")
+
+#The matrix shows only mild correlations left in our predictors.
+#These are now ready to be used in our regression analysis.
+
+#ANALYSIS OF THE TARGET VARIABLE
+
+y = new_data1$Item_Outlet_Sales
+hist(new_data1$Item_Outlet_Sales)
+yl = y^(1/3) #cubic root
+hist(yl)
+
+#y not transformed 
+p_hist <- new_data1 %>% 
+  ggplot(aes(x = y, y = ..density.., color = I("gray"), fill = I("grey20"))) + geom_histogram(bins = 50) +
+  theme_bw() +
+  theme(text = element_text(size = 10), axis.text.y = element_blank(), 
+        axis.ticks.y = element_blank(), axis.title.y = element_blank())
+
+#Boxplot
+p_box <- new_data1 %>% 
+  ggplot(aes(x = y, color = I("grey20"), fill = I("gray"))) + geom_boxplot() +
+  theme_bw() +
+  theme(text = element_text(size = 10), axis.text.y = element_blank(), 
+        axis.ticks.y = element_blank())
+cowplot::plot_grid(p_box, p_hist, nrow = 2, ncol = 1) #the Y is right-skewed
+
+#y transformed 
+p_hist <- new_data1 %>% 
+  ggplot(aes(x = yl, y = ..density.., color = I("gray"), fill = I("grey20"))) + geom_histogram(bins = 50) +
+  theme_bw() +
+  theme(text = element_text(size = 10), axis.text.y = element_blank(), 
+        axis.ticks.y = element_blank(), axis.title.y = element_blank())
+
+#Boxplot
+p_box <- new_data1 %>% 
+  ggplot(aes(x = yl, color = I("grey20"), fill = I("gray"))) + geom_boxplot() +
+  theme_bw() +
+  theme(text = element_text(size = 10), axis.text.y = element_blank(), 
+        axis.ticks.y = element_blank())
+cowplot::plot_grid(p_box, p_hist, nrow = 2, ncol = 1)
+
+# DATA SPLITTING 
+#Take 75% of the sample size
+set.seed(2020)
+smp_size <- floor(0.75 * nrow(new_data1))
+
+#Set the seed to make the partition reproducible
+train_ind <- sample(seq_len(nrow(new_data1)), size = smp_size)
+train <- new_data1[train_ind, ]
+test <- new_data1[-train_ind, ]
+y_train <- as.vector(train[,4]) 
+x_train <- as.vector(train[,c(1:3,5:32)])
+y_train = (y_train)^(1/3)
+
+# COMPLETE REGRESSION MODEL 
+mod = lm(unlist(y_train)~., data = x_train)
+summary(mod)
+
+
+# Verification of the assumptions of the residuals 
+residuals = mod$residuals
+t.test(residuals)
+mean(residuals)
+plot(residuals)
+hist(residuals)
+#graph of the standardized residuals
+qqnorm(scale(residuals))
+#2) check the homoscedasticity of the residuals
+plot(unlist(y_train),residuals, xlab = "Y") 
+#graphs
+library(ggplot2)
+library(olsrr)
+ols_plot_resid_qq(mod) 
+ols_plot_resid_fit(mod)
+ols_plot_resid_hist(mod)
+
+# STEP AIC 
+library(MASS)
+library(car)
+mod1 = stepAIC(mod)
+summary(mod1)
+vif(mod1)
+
+#Final Model Analysis
+#Remove the non significant variables 
+mod2 = lm(unlist(y_train)~ Item_MRP+Outlet_Identifier_OUT010+Outlet_Identifier_OUT018+Outlet_Identifier_OUT019+Outlet_Identifier_OUT027+Outlet_Identifier_OUT045 , data = x_train)
+summary(mod2)
+
+
+#PREDICTIVE PERFORMANCE
+#Make Predictions
+predictions1 <- mod2 %>% predict(test) #TEST
+predictions2 <- mod2 %>% predict(train) #TRAINING
+
+#Compute the prediction error, RMSE
+RMSE(predictions1,(test$Item_Outlet_Sales)^(1/3)) #TEST
+RMSE(predictions2, (train$Item_Outlet_Sales)^(1/3)) #TRAIN
+
+
+#COMPARISON WITH THE BENCHMARK
+mod3 <- lm(unlist(y_train)~1, data = x_train)
+predictions3 <- mod3 %>% predict(train) #TRAIN
+RMSE(predictions3, (train$Item_Outlet_Sales)^(1/3))
+predictions4 <- mod3 %>% predict(test) #TEST
+RMSE(predictions4, (test$Item_Outlet_Sales)^(1/3))
+
+1-((2.01013-3.597343)/3.597343) #TRAIN
+
+1-((2.033121-3.534489)/3.534489) #TEST
